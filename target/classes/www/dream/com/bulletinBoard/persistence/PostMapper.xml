@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!-- resultMap : DB Table 정의 내역과 객체 정의 내역에 있어 mismatch(부조화)가 있을 시 이를 연동, 
+	짝 지어주는 정보를 정의함 -->
+<mapper
+	namespace="www.dream.com.bulletinBoard.persistence.PostMapper">
+
+	<resultMap type="www.dream.com.bulletinBoard.model.PostVO"
+		id="rmPost"
+		extends="www.dream.com.common.persistence.CommonMngVOMapper.commonMngVOMap">
+		<!-- property는 자바의 객체명, column은 DB의 컬럼명 -->
+		<id property="id" column="id"></id>
+		<result property="title" column="title"></result>
+		<result property="content" column="content"></result>
+		<result property="readCnt" column="read_cnt"></result>
+		<result property="likeCnt" column="like_cnt"></result>
+		<result property="dislikeCnt" column="dislike_cnt"></result>
+	</resultMap>
+	
+	<resultMap type="www.dream.com.bulletinBoard.model.PostVO"
+		id="rmPostWithWriter" extends="rmPost">
+		
+		<!-- Master-Detail (1:N) 구조에서 Detail이 Master를 함께 조인으로 읽어서 객체 만들 때 -->
+		<association property="writer" columnPrefix="w_"
+		 resultMap = "www.dream.com.party.persistence.PartyMapper.partyMap">
+		</association>
+	</resultMap>
+	
+	<sql id="searchCommon">
+		s_hashtag h, sm_ht2post m, s_post p
+	 where 
+	 h.id in (
+	   select id
+	    from s_hashtag
+	   start with hashtag in 
+	   <foreach collection="cri.searchingHashtags" item = "aWord" open="(" separator="," close=")">
+			#{aWord}	   	
+	   </foreach>
+	   
+	   CONNECT BY PRIOR id = super_id)
+	  	 and h.id = m.hashtag_id
+	  	 and m.post_id = p.id
+	  	 and p.board_id = #{boardId}
+	</sql>
+	
+	<!-- public long getTotalCount(@Param("boardId") int boardId); -->
+	<select id="getTotalCount" resultType="_long">
+	<![CDATA[
+		  select count(id)
+	  		from s_post
+	  	   where board_id = #{boardId}
+	]]>
+	</select>
+	
+	<!-- public long getSearchTotalCount(@Param("boardId") int boardId, @Param("cri") Criteria fromUser); -->
+	<select id="getSearchTotalCount" resultType="_long">
+		select count(distinct p.id)	 
+	  from 
+	  <include refid="searchCommon"></include>
+	</select>
+	
+	<!-- 밑에 쿼리문 고치기 전 백업 자료!
+		<![CDATA[
+	select p.*, w.name w_name, w.descrim w_descrim	 
+	  from (
+	  	  SELECT *
+		    FROM s_post
+		   where board_id = #{boardId}
+		   order by id desc
+		  OFFSET (#{cri.pageNumber} - 1) * #{cri.amount} ROWS FETCH FIRST #{cri.amount} ROWS ONLY
+	       ) p, s_party w
+	 where p.writer_id = w.user_id 
+	 
+	 select p.*, w.name w_name, w.descrim w_descrim 
+		  from (
+		  select p.*, rownum rn
+		  	from s_post p
+		   where board_id = #{boardId}
+		    and rownum <= #{cri.pageNumber} * #{cri.amount}
+		  order by id desc
+		  ) p, s_party w
+		 where p.rn > (#{cri.pageNumber} - 1) * #{cri.amount}
+		  and p.writer_id = w.user_id
+	]]> -->
+		  
+	<!-- public List<PostVO> getList(@Param("boardId") int boardId, @Param("cri") Criteria cri); -->
+	<select id="getList" resultMap="rmPostWithWriter">
+	<![CDATA[
+	select p.*, w.name w_name, w.descrim w_descrim	 
+	  from (
+	  	  SELECT *
+		    FROM s_post
+		   where board_id = #{boardId}
+		   order by id desc
+		  OFFSET (#{cri.pageNumber} - 1) * #{cri.amount} ROWS FETCH FIRST #{cri.amount} ROWS ONLY
+	       ) p, s_party w
+	 where p.writer_id = w.user_id
+	]]>
+	</select>
+	
+	<!-- public List<PostVO> getListByHashTag(@Param("boardId") int boardId, @Param("cri") Criteria cri); -->
+	<select id="getListByHashTag" resultMap="rmPostWithWriter">
+	select distinct p.*, w.name w_name, w.descrim w_descrim	 
+	  from s_party w,
+	  <include refid="searchCommon"></include>
+	  	 and p.writer_id = w.user_id
+	 	order by p.id desc
+		  OFFSET (#{cri.pageNumber} - 1) * #{cri.amount} ROWS FETCH FIRST #{cri.amount} ROWS ONLY	
+	</select>
+	
+	
+	<!-- public PostVO findPostById(String id); -->
+	<select id="findPostById" resultMap="rmPostWithWriter">
+	<![CDATA[
+	select p.*, w.name w_name, w.descrim w_descrim
+	  from s_post p, s_party w
+	 where p.id = #{id}
+	   and p.writer_id = w.user_id
+	]]>
+	</select>
+	
+	<!-- public int insert(@Param("board") BoardVO board, @Param("post") PostVO post); -->
+	<insert id="insert">
+		<selectKey keyProperty="post.id" order="BEFORE" resultType="string">
+			select get_id(seq_post_id.nextval) from dual
+		</selectKey>
+		insert into s_post(id, board_id, writer_id, title, content)
+			values(#{post.id}, #{board.id}, #{post.writer.userId}, #{post.title}, #{post.content})	
+	</insert>
+	
+	<!-- public int updatePost(PostVO post); -->
+	<update id="updatePost">
+		update s_post
+		   set title = #{title},
+		   	   content = #{content},
+		   	   upt_dt = sysdate
+		 where id=#{id}
+	</update>
+	<!-- public int deletePostById(String id); -->
+	<delete id="deletePostById">
+		delete from s_post where id=#{id}
+	</delete>
+</mapper>
+
+
+
+
+
+
+
+
+
